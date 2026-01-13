@@ -141,6 +141,7 @@ namespace Handlers
                     [
                         new TextResourceContents
                         {
+                            Uri = resourceUri,
                             MimeType = "text/plain",
                             Text = $"Error retrieving resource: {ex.Message}"
                         }
@@ -252,6 +253,7 @@ namespace Handlers
             [
                 new TextResourceContents
                 {
+                    Uri = uri,
                     MimeType = "application/json",
                     Text = jsonContent
                 }

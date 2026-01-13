@@ -2,16 +2,26 @@ using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Models;
+using System.Data;
+using System.Text.RegularExpressions;
 
 namespace Services
 {
-    public class QueryService
+    public partial class QueryService
     {
         private readonly SqlConnectionFactory _connectionFactory;
         private readonly ILogger<QueryService> _logger;
         private readonly SqlInjectionValidationService _sqlInjectionValidator;
         private readonly int _defaultCommandTimeout;
         private readonly int _defaultMaxRows;
+        private readonly bool _readOnlyMode;
+
+        // Regex patterns for read-only validation
+        [GeneratedRegex(@"^\s*(INSERT|UPDATE|DELETE|TRUNCATE|DROP|ALTER|CREATE|MERGE)\b", RegexOptions.IgnoreCase)]
+        private static partial Regex WriteOperationPattern();
+
+        [GeneratedRegex(@"^[a-zA-Z_][a-zA-Z0-9_]*$")]
+        private static partial Regex SafeIdentifierPattern();
 
         public QueryService(
             SqlConnectionFactory connectionFactory,
@@ -22,10 +32,11 @@ namespace Services
             _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _sqlInjectionValidator = sqlInjectionValidator ?? throw new ArgumentNullException(nameof(sqlInjectionValidator));
-            
+
             // Get configuration values with defaults
             _defaultCommandTimeout = configuration.GetValue<int>("Database:DefaultCommandTimeout", 30);
             _defaultMaxRows = configuration.GetValue<int>("Database:DefaultMaxRows", 1000);
+            _readOnlyMode = configuration.GetValue<bool>("Database:ReadOnly", false);
         }
 
         /// <summary>
@@ -48,6 +59,17 @@ namespace Services
             
             _logger.LogDebug("Executing query with timeout {Timeout}s and max rows {MaxRows}", timeout, rowLimit);
             
+            // Check read-only mode
+            if (_readOnlyMode && WriteOperationPattern().IsMatch(query))
+            {
+                _logger.LogWarning("Write operation blocked in read-only mode: {Query}", query[..Math.Min(50, query.Length)]);
+                return new QueryResult
+                {
+                    IsSuccess = false,
+                    Message = "Write operations (INSERT, UPDATE, DELETE, etc.) are not allowed in read-only mode"
+                };
+            }
+
             // Validate the query for SQL injection
             var (isValid, errorMessage) = _sqlInjectionValidator.ValidateQuery(query);
             if (!isValid)
@@ -167,6 +189,97 @@ namespace Services
             {
                 _logger.LogError(ex, "Error reading query results: {Message}", ex.Message);
                 throw;
+            }
+        }
+
+        /// <summary>
+        /// Executes a stored procedure with parameters
+        /// </summary>
+        /// <param name="schema">The schema name (e.g., 'dbo')</param>
+        /// <param name="procedureName">The procedure name</param>
+        /// <param name="parameters">Dictionary of parameter names and values</param>
+        /// <param name="commandTimeout">Optional command timeout in seconds</param>
+        /// <param name="maxRows">Optional maximum number of rows to return</param>
+        /// <param name="cancellationToken">Cancellation token</param>
+        /// <returns>Query result</returns>
+        public async Task<QueryResult> ExecuteStoredProcedureAsync(
+            string schema,
+            string procedureName,
+            Dictionary<string, object?>? parameters = null,
+            int? commandTimeout = null,
+            int? maxRows = null,
+            CancellationToken cancellationToken = default)
+        {
+            // Validate schema and procedure names for safe identifiers
+            if (!SafeIdentifierPattern().IsMatch(schema))
+            {
+                return new QueryResult
+                {
+                    IsSuccess = false,
+                    Message = $"Invalid schema name: '{schema}'. Only alphanumeric characters and underscores are allowed."
+                };
+            }
+
+            if (!SafeIdentifierPattern().IsMatch(procedureName))
+            {
+                return new QueryResult
+                {
+                    IsSuccess = false,
+                    Message = $"Invalid procedure name: '{procedureName}'. Only alphanumeric characters and underscores are allowed."
+                };
+            }
+
+            int timeout = commandTimeout ?? _defaultCommandTimeout;
+            int rowLimit = maxRows ?? _defaultMaxRows;
+
+            _logger.LogDebug("Executing stored procedure [{Schema}].[{Procedure}] with timeout {Timeout}s",
+                schema, procedureName, timeout);
+
+            using var connection = _connectionFactory.CreateConnection(timeout);
+
+            try
+            {
+                await connection.OpenAsync(cancellationToken);
+
+                using var command = new SqlCommand($"[{schema}].[{procedureName}]", connection)
+                {
+                    CommandType = CommandType.StoredProcedure,
+                    CommandTimeout = timeout
+                };
+
+                // Add parameters if provided
+                if (parameters != null)
+                {
+                    foreach (var param in parameters)
+                    {
+                        var paramName = param.Key.StartsWith('@') ? param.Key : $"@{param.Key}";
+                        command.Parameters.AddWithValue(paramName, param.Value ?? DBNull.Value);
+                    }
+                }
+
+                using var reader = await command.ExecuteReaderAsync(cancellationToken);
+                return await ReadQueryResultAsync(reader, rowLimit, cancellationToken);
+            }
+            catch (SqlException ex)
+            {
+                _logger.LogError(ex, "SQL error executing stored procedure [{Schema}].[{Procedure}]: {Message}",
+                    schema, procedureName, ex.Message);
+                return new QueryResult
+                {
+                    IsSuccess = false,
+                    Message = $"SQL Error: {ex.Message}",
+                    ErrorCode = ex.Number
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error executing stored procedure [{Schema}].[{Procedure}]: {Message}",
+                    schema, procedureName, ex.Message);
+                return new QueryResult
+                {
+                    IsSuccess = false,
+                    Message = ex.Message
+                };
             }
         }
     }
