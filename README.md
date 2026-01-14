@@ -195,6 +195,16 @@ For better security, you can use environment variables for your connection strin
     - `commandTimeout`: Optional command timeout in seconds
     - `maxRows`: Optional maximum number of rows to return
 
+### Schema Tools (Token-Optimized)
+
+Lightweight tools for exploring database structure without fetching data:
+
+- **GetTableColumns**: Get column names and types for a table
+- **GetTableRowCount**: Get row count for a table
+- **ListTables**: List all tables in a schema (with optional row counts)
+- **GetPrimaryKey**: Get primary key columns for a table
+- **GetSampleData**: Get a small sample of data (max 20 rows)
+
 ### Database Resources
 
 The server provides database schema information through a resource-based approach. Resources are accessed via URIs and are lazy-loaded with caching for improved performance.
@@ -206,8 +216,12 @@ The server provides database schema information through a resource-based approac
 | `sqlserver://schemas/{schema_name}/views` | List of views in a schema | Loaded on first request, cached for 10 minutes |
 | `sqlserver://schemas/{schema_name}/procedures` | List of stored procedures in a schema | Loaded on first request, cached for 10 minutes |
 | `sqlserver://schemas/{schema_name}/tables/{table_name}` | Detailed information about a specific table | Loaded on first request, cached for 10 minutes |
-| `sqlserver://schemas/{schema_name}/views/{view_name}` | Detailed information about a specific view | Loaded on first request, cached for 10 minutes |
-| `sqlserver://schemas/{schema_name}/procedures/{procedure_name}` | Detailed information about a specific procedure | Loaded on first request, cached for 10 minutes |
+| `sqlserver://schemas/{schema_name}/views/{view_name}` | View columns (definition excluded) | Loaded on first request, cached for 10 minutes |
+| `sqlserver://schemas/{schema_name}/views/{view_name}/definition` | View SQL definition | Loaded on request |
+| `sqlserver://schemas/{schema_name}/procedures/{procedure_name}` | Procedure parameters (definition excluded) | Loaded on first request, cached for 10 minutes |
+| `sqlserver://schemas/{schema_name}/procedures/{procedure_name}/definition` | Procedure SQL definition | Loaded on request |
+
+**Note:** View and procedure definitions are excluded by default to reduce token usage. Use the `/definition` endpoint when you need the SQL source code.
 
 Resources are automatically discovered by the MCP client and can be accessed directly without requiring specific tool calls.
 

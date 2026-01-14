@@ -21,7 +21,8 @@ src/
 ├── Options.cs              # CLI options (--dsn, --env-var, --read-only)
 ├── Tools/
 │   ├── QueryTool.cs        # ExecuteQuery MCP tool
-│   └── StoredProcedureTool.cs  # ExecuteStoredProcedure MCP tool
+│   ├── StoredProcedureTool.cs  # ExecuteStoredProcedure MCP tool
+│   └── SchemaTool.cs       # Lightweight schema exploration tools
 ├── Services/
 │   ├── QueryService.cs     # Query execution with read-only validation
 │   ├── SqlConnectionService.cs
@@ -63,6 +64,7 @@ docker run -i tsql-mcp-server --dsn "Server=host.docker.internal;Database=...;..
 2. **SQL Injection Prevention**: Built-in validation in `SqlInjectionValidationService`
 3. **Stored Procedure Execution**: Safe execution with parameterized inputs
 4. **Resource Caching**: 10-minute TTL cache for schema metadata
+5. **Token Optimization**: Compact JSON, optional definitions, character limits, schema tools
 
 ## Adding New MCP Tools
 

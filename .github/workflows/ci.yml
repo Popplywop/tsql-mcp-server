@@ -45,7 +45,6 @@ jobs:
       with:
         dotnet-version: '10.0' # Specify the version of .NET your project uses
 
-
     # Step 5: Restore dependencies
     - name: Restore dependencies
       if: ${{ env.VERSION_EXISTS != '200' }}

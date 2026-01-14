@@ -17,7 +17,8 @@ namespace Handlers
         private readonly ILogger<DatabaseResourceHandler> _logger;
         private readonly SqlConnectionFactory _connectionFactory;
         private readonly DatabaseMetadataCache _metadataCache;
-        private static readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
+        // Use compact JSON by default to reduce token usage
+        private static readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = false };
 
         // Define resource URI prefixes
         private const string RESOURCE_PREFIX = "sqlserver://";
@@ -190,10 +191,10 @@ namespace Handlers
                     string schemaAndViews = remaining;
                     string schemaName = schemaAndViews[..schemaAndViews.IndexOf(SCHEMA_VIEWS_SUFFIX)];
                     string afterViews = schemaAndViews[(schemaAndViews.IndexOf(SCHEMA_VIEWS_SUFFIX) + SCHEMA_VIEWS_SUFFIX.Length)..];
-                    
+
                     if (string.IsNullOrEmpty(afterViews))
                     {
-                        // List all views in schema: sqlserver://schema/dbo/views
+                        // List all views in schema: sqlserver://schemas/dbo/views
                         var views = await _metadataCache.GetOrAddAsync(
                             $"views_{schemaName}",
                             () => GetViewsBySchemaAsync(schemaName, cancellationToken));
@@ -201,12 +202,24 @@ namespace Handlers
                     }
                     else
                     {
-                        // Get specific view: sqlserver://schema/dbo/views/viewname
-                        string viewName = afterViews.TrimStart('/');
-                        var viewInfo = await _metadataCache.GetOrAddAsync(
-                            $"view_{schemaName}_{viewName}",
-                            () => GetViewInfoAsync(schemaName, viewName, cancellationToken));
-                        jsonContent = JsonSerializer.Serialize(viewInfo, _jsonOptions);
+                        string viewPath = afterViews.TrimStart('/');
+
+                        // Check if requesting definition: sqlserver://schemas/dbo/views/viewname/definition
+                        if (viewPath.EndsWith("/definition"))
+                        {
+                            string viewName = viewPath[..^"/definition".Length];
+                            var definition = await GetViewDefinitionAsync(schemaName, viewName, cancellationToken);
+                            jsonContent = JsonSerializer.Serialize(new { Schema = schemaName, View = viewName, Definition = definition }, _jsonOptions);
+                        }
+                        else
+                        {
+                            // Get specific view (without definition to save tokens): sqlserver://schemas/dbo/views/viewname
+                            string viewName = viewPath;
+                            var viewInfo = await _metadataCache.GetOrAddAsync(
+                                $"view_{schemaName}_{viewName}",
+                                () => GetViewInfoAsync(schemaName, viewName, cancellationToken));
+                            jsonContent = JsonSerializer.Serialize(viewInfo, _jsonOptions);
+                        }
                     }
                 }
                 // Handle schema/procedures pattern
@@ -215,10 +228,10 @@ namespace Handlers
                     string schemaAndProcedures = remaining;
                     string schemaName = schemaAndProcedures[..schemaAndProcedures.IndexOf(SCHEMA_PROCEDURES_SUFFIX)];
                     string afterProcedures = schemaAndProcedures[(schemaAndProcedures.IndexOf(SCHEMA_PROCEDURES_SUFFIX) + SCHEMA_PROCEDURES_SUFFIX.Length)..];
-                    
+
                     if (string.IsNullOrEmpty(afterProcedures))
                     {
-                        // List all procedures in schema: sqlserver://schema/dbo/procedures
+                        // List all procedures in schema: sqlserver://schemas/dbo/procedures
                         var procedures = await _metadataCache.GetOrAddAsync(
                             $"procedures_{schemaName}",
                             () => GetStoredProceduresBySchemaAsync(schemaName, cancellationToken));
@@ -226,12 +239,24 @@ namespace Handlers
                     }
                     else
                     {
-                        // Get specific procedure: sqlserver://schema/dbo/procedures/procedurename
-                        string procedureName = afterProcedures.TrimStart('/');
-                        var procedureInfo = await _metadataCache.GetOrAddAsync(
-                            $"procedure_{schemaName}_{procedureName}",
-                            () => GetProcedureInfoAsync(schemaName, procedureName, cancellationToken));
-                        jsonContent = JsonSerializer.Serialize(procedureInfo, _jsonOptions);
+                        string procedurePath = afterProcedures.TrimStart('/');
+
+                        // Check if requesting definition: sqlserver://schemas/dbo/procedures/procname/definition
+                        if (procedurePath.EndsWith("/definition"))
+                        {
+                            string procedureName = procedurePath[..^"/definition".Length];
+                            var definition = await GetProcedureDefinitionAsync(schemaName, procedureName, cancellationToken);
+                            jsonContent = JsonSerializer.Serialize(new { Schema = schemaName, Procedure = procedureName, Definition = definition }, _jsonOptions);
+                        }
+                        else
+                        {
+                            // Get specific procedure (without definition to save tokens): sqlserver://schemas/dbo/procedures/procname
+                            string procedureName = procedurePath;
+                            var procedureInfo = await _metadataCache.GetOrAddAsync(
+                                $"procedure_{schemaName}_{procedureName}",
+                                () => GetProcedureInfoAsync(schemaName, procedureName, cancellationToken));
+                            jsonContent = JsonSerializer.Serialize(procedureInfo, _jsonOptions);
+                        }
                     }
                 }
                 else
@@ -495,7 +520,7 @@ namespace Handlers
             using var connection = _connectionFactory.CreateConnection(60);
             await connection.OpenAsync(cancellationToken);
 
-            // Get view columns
+            // Get view columns only (no definition to save tokens)
             var columns = new List<ColumnInfo>();
             string columnsQuery = @"
                 SELECT
@@ -525,31 +550,30 @@ namespace Handlers
                 }
             }
 
-            // Get view definition
-            string definition = string.Empty;
+            // Return view info without definition (access via /definition endpoint to get it)
+            return new ViewInfo(schemaName, viewName)
+            {
+                Columns = columns
+                // Definition is null by default - use /definition endpoint to fetch
+            };
+        }
+
+        private async Task<string> GetViewDefinitionAsync(string schemaName, string viewName, CancellationToken cancellationToken)
+        {
+            using var connection = _connectionFactory.CreateConnection(60);
+            await connection.OpenAsync(cancellationToken);
+
             string definitionQuery = @"
                 SELECT VIEW_DEFINITION
                 FROM INFORMATION_SCHEMA.VIEWS
                 WHERE TABLE_SCHEMA = @SchemaName
                 AND TABLE_NAME = @ViewName";
 
-            using (var command = new SqlCommand(definitionQuery, connection))
-            {
-                command.Parameters.AddWithValue("@SchemaName", schemaName);
-                command.Parameters.AddWithValue("@ViewName", viewName);
-                var result = await command.ExecuteScalarAsync(cancellationToken);
-                if (result != null && result != DBNull.Value)
-                {
-                    definition = (string)result;
-                }
-            }
-
-            // Return view info
-            return new ViewInfo(schemaName, viewName)
-            {
-                Columns = columns,
-                Definition = definition
-            };
+            using var command = new SqlCommand(definitionQuery, connection);
+            command.Parameters.AddWithValue("@SchemaName", schemaName);
+            command.Parameters.AddWithValue("@ViewName", viewName);
+            var result = await command.ExecuteScalarAsync(cancellationToken);
+            return result != null && result != DBNull.Value ? (string)result : string.Empty;
         }
 
         private async Task<ProcedureInfo> GetProcedureInfoAsync(string schemaName, string procedureName, CancellationToken cancellationToken)
@@ -557,7 +581,7 @@ namespace Handlers
             using var connection = _connectionFactory.CreateConnection(60);
             await connection.OpenAsync(cancellationToken);
 
-            // Get procedure parameters
+            // Get procedure parameters only (no definition to save tokens)
             var parameters = new List<ParameterInfo>();
             string paramsQuery = @"
                 SELECT
@@ -588,8 +612,19 @@ namespace Handlers
                 }
             }
 
-            // Get procedure definition
-            string definition = string.Empty;
+            // Return procedure info without definition (access via /definition endpoint to get it)
+            return new ProcedureInfo(schemaName, procedureName)
+            {
+                Parameters = parameters
+                // Definition is null by default - use /definition endpoint to fetch
+            };
+        }
+
+        private async Task<string> GetProcedureDefinitionAsync(string schemaName, string procedureName, CancellationToken cancellationToken)
+        {
+            using var connection = _connectionFactory.CreateConnection(60);
+            await connection.OpenAsync(cancellationToken);
+
             string definitionQuery = @"
                 SELECT ROUTINE_DEFINITION
                 FROM INFORMATION_SCHEMA.ROUTINES
@@ -597,23 +632,11 @@ namespace Handlers
                 AND ROUTINE_NAME = @ProcedureName
                 AND ROUTINE_TYPE = 'PROCEDURE'";
 
-            using (var command = new SqlCommand(definitionQuery, connection))
-            {
-                command.Parameters.AddWithValue("@SchemaName", schemaName);
-                command.Parameters.AddWithValue("@ProcedureName", procedureName);
-                var result = await command.ExecuteScalarAsync(cancellationToken);
-                if (result != null && result != DBNull.Value)
-                {
-                    definition = (string)result;
-                }
-            }
-
-            // Return procedure info
-            return new ProcedureInfo(schemaName, procedureName)
-            {
-                Parameters = parameters,
-                Definition = definition
-            };
+            using var command = new SqlCommand(definitionQuery, connection);
+            command.Parameters.AddWithValue("@SchemaName", schemaName);
+            command.Parameters.AddWithValue("@ProcedureName", procedureName);
+            var result = await command.ExecuteScalarAsync(cancellationToken);
+            return result != null && result != DBNull.Value ? (string)result : string.Empty;
         }
     }
 }

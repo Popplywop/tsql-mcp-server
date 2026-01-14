@@ -77,6 +77,7 @@ public class Program
                 .AddSingleton<SqlInjectionValidationService>()
                 .AddSingleton<DatabaseMetadataCache>()
                 .AddSingleton<QueryService>()
+                .AddSingleton<IQueryService>(sp => sp.GetRequiredService<QueryService>())
                 .AddSingleton<DatabaseResourceHandler>();
 
             // Build the service provider to get resource handler

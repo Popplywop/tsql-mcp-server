@@ -6,10 +6,11 @@ using System.Text.Json;
 namespace Tools;
 
 [McpServerToolType]
-public class StoredProcedureTool(QueryService queryService)
+public class StoredProcedureTool(IQueryService queryService)
 {
-    private readonly QueryService _queryService = queryService;
-    private static readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
+    private readonly IQueryService _queryService = queryService;
+    private static readonly JsonSerializerOptions _compactJsonOptions = new() { WriteIndented = false };
+    private static readonly JsonSerializerOptions _prettyJsonOptions = new() { WriteIndented = true };
 
     [McpServerTool, Description("Executes a stored procedure with optional parameters and returns the results.")]
     public async Task<string> ExecuteStoredProcedure(
@@ -18,6 +19,8 @@ public class StoredProcedureTool(QueryService queryService)
         [Description("JSON object of parameters (e.g., {\"@param1\": \"value\", \"@param2\": 123}). Parameter names can optionally include the @ prefix.")] string? parametersJson = null,
         [Description("Optional command timeout in seconds")] int? commandTimeout = null,
         [Description("Optional maximum number of rows to return")] int? maxRows = null,
+        [Description("Optional maximum characters to return - truncates results if exceeded")] int? maxChars = null,
+        [Description("Use compact JSON output to reduce token usage (default: true)")] bool compact = true,
         CancellationToken cancellationToken = default)
     {
         Dictionary<string, object?>? parameters = null;
@@ -50,11 +53,32 @@ public class StoredProcedureTool(QueryService queryService)
 
         if (result.Rows.Count > 0)
         {
-            return JsonSerializer.Serialize(result, _jsonOptions);
+            var jsonOptions = compact ? _compactJsonOptions : _prettyJsonOptions;
+            var json = JsonSerializer.Serialize(result, jsonOptions);
+
+            // Apply character limit if specified
+            if (maxChars.HasValue && json.Length > maxChars.Value)
+            {
+                var summary = new
+                {
+                    result.Columns,
+                    result.RowCount,
+                    result.TotalRowCount,
+                    Truncated = true,
+                    TruncatedAt = maxChars.Value,
+                    Message = $"Results exceeded {maxChars.Value} characters. Showing summary only. Use smaller maxRows.",
+                    SampleRows = result.Rows.Take(3)
+                };
+                return JsonSerializer.Serialize(summary, jsonOptions);
+            }
+
+            return json;
         }
         else
         {
-            return result.Message ?? "Stored procedure executed successfully with no results.";
+            return string.IsNullOrEmpty(result.Message)
+                ? "Stored procedure executed successfully with no results."
+                : result.Message;
         }
     }
 }

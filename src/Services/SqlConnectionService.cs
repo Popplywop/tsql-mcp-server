@@ -56,7 +56,8 @@ namespace Services
             
             _databaseInfo = new DatabaseInfo
             {
-                ConnectionString = _connectionString,
+                // Use the optimized connection string with pool settings
+                ConnectionString = _connectionBuilder.ConnectionString,
                 // Extract information directly from the connection builder
                 ServerName = _connectionBuilder.DataSource,
                 DatabaseName = _connectionBuilder.InitialCatalog,

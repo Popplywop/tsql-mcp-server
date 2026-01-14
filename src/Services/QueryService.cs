@@ -7,7 +7,7 @@ using System.Text.RegularExpressions;
 
 namespace Services
 {
-    public partial class QueryService
+    public partial class QueryService : IQueryService
     {
         private readonly SqlConnectionFactory _connectionFactory;
         private readonly ILogger<QueryService> _logger;
@@ -153,7 +153,7 @@ namespace Services
                 // Read rows with pagination
                 int rowCount = 0;
                 bool hasMoreRows = false;
-                
+
                 while (await reader.ReadAsync(cancellationToken))
                 {
                     if (rowCount >= maxRows)
@@ -161,7 +161,7 @@ namespace Services
                         hasMoreRows = true;
                         break;
                     }
-                    
+
                     var row = new Dictionary<string, object>();
                     for (int i = 0; i < reader.FieldCount; i++)
                     {
@@ -176,13 +176,34 @@ namespace Services
 
                 result.RowCount = result.Rows.Count;
                 result.HasMoreRows = hasMoreRows;
-                
+
+                // If there are more rows, count them (up to a reasonable limit for performance)
                 if (hasMoreRows)
                 {
-                    result.Message = $"Query returned {result.RowCount} rows (limited from a larger result set). Use pagination parameters to see more results.";
-                    _logger.LogInformation("Query result was limited to {MaxRows} rows", maxRows);
+                    int totalCount = rowCount;
+                    const int maxCountLimit = 10000; // Don't count more than this for performance
+
+                    while (totalCount < maxCountLimit && await reader.ReadAsync(cancellationToken))
+                    {
+                        totalCount++;
+                    }
+
+                    // If we hit the limit, indicate there are more
+                    if (totalCount >= maxCountLimit)
+                    {
+                        result.TotalRowCount = null; // Unknown, too many to count
+                        result.Message = $"Returned {result.RowCount} of 10,000+ rows. Use WHERE clause or pagination for better results.";
+                    }
+                    else
+                    {
+                        result.TotalRowCount = totalCount;
+                        result.Message = $"Returned {result.RowCount} of {totalCount} total rows. Adjust maxRows parameter to see more.";
+                    }
+
+                    _logger.LogInformation("Query result was limited to {MaxRows} rows (total available: {TotalCount})",
+                        maxRows, result.TotalRowCount?.ToString() ?? "10000+");
                 }
-                
+
                 return result;
             }
             catch (Exception ex)
