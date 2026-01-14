@@ -11,7 +11,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>tsql-mcp-server</ToolCommandName>
     <PackageId>tsql-mcp-server</PackageId>
-    <Version>1.0.5</Version>
+    <Version>1.0.6</Version>
     <Authors>Jakob Popple</Authors>
     <Description>SQL Server MCP Server - Provides SQL Server database access via Model Context Protocol</Description>
     <PackageTags>sql;mcp;database;tool</PackageTags>
