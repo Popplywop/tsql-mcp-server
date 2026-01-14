@@ -14,13 +14,7 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    # Step 2: Setup .NET environment
-    - name: Setup .NET
-      uses: actions/setup-dotnet@v3
-      with:
-        dotnet-version: '10.0' # Specify the version of .NET your project uses
-
-    # Step 3: Extract the current version from the .csproj file
+    # Step 2: Extract the current version from the .csproj file
     - name: Get current version
       id: get_version
       shell: pwsh
@@ -29,7 +23,7 @@ jobs:
         $version = $xml.Project.PropertyGroup.Version
         echo "CURRENT_VERSION=$version" >> $env:GITHUB_ENV
 
-    # Step 4: Check if this version is already published on NuGet.org
+    # Step 3: Check if this version is already published on NuGet.org
     - name: Check if version exists on NuGet
       id: check_version
       shell: pwsh
@@ -43,17 +37,28 @@ jobs:
         }
         echo "VERSION_EXISTS=$statusCode" >> $env:GITHUB_ENV
         Write-Host "Package version check result: $statusCode"
+      
+    # Step 4: Setup .NET environment
+    - name: Setup .NET
+      if: ${{ env.VERSION_EXISTS != '200' }}
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: '10.0' # Specify the version of .NET your project uses
+
 
     # Step 5: Restore dependencies
     - name: Restore dependencies
+      if: ${{ env.VERSION_EXISTS != '200' }}
       run: dotnet restore
 
     # Step 6: Build the project
     - name: Build the project
+      if: ${{ env.VERSION_EXISTS != '200' }}
       run: dotnet build --configuration Release --no-restore
 
     # Step 7: Pack the project
     - name: Pack the project
+      if: ${{ env.VERSION_EXISTS != '200' }}
       run: dotnet pack --configuration Release --no-build -o ./artifacts
 
     # Step 8: Publish the package to NuGet.org
