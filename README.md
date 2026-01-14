@@ -1,5 +1,3 @@
-# 🚧 WORK IN PROGRESS 🚧
-
 # SQL Server MCP Server
 
 A Model Context Protocol (MCP) server that provides tools for interacting with SQL Server databases. This server allows Large Language Models (LLMs) to query and inspect SQL Server databases through a standardized protocol.
