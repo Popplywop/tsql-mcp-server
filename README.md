@@ -15,12 +15,35 @@ A Model Context Protocol (MCP) server that provides tools for interacting with S
 
 ### Prerequisites
 
-- .NET 8.0 SDK or later
+- .NET 10.0 SDK or later (or Docker)
 - SQL Server instance (local or remote)
 
 ### Installation
 
-#### Option 1: Install as a .NET Tool (Recommended)
+#### Option 1: Docker (Recommended)
+
+Run the server using Docker without installing .NET:
+
+```bash
+# Build the image
+docker build -t tsql-mcp-server .
+
+# Run with connection string
+docker run -i tsql-mcp-server --dsn "Server=host.docker.internal;Database=mydb;User Id=sa;Password=mypassword;TrustServerCertificate=True;"
+
+# Run in read-only mode
+docker run -i tsql-mcp-server --dsn "..." --read-only
+
+# Run with environment variable
+docker run -i -e SQL_CONNECTION="Server=..." tsql-mcp-server --env-var SQL_CONNECTION
+```
+
+**Notes:**
+- The `-i` flag is required for stdio transport
+- Use `host.docker.internal` to connect to SQL Server on your host machine
+- For WSL2 users: if `host.docker.internal` doesn't resolve, use `--network host` and `localhost` instead
+
+#### Option 2: Install as a .NET Tool
 
 Install globally as a .NET tool:
 
@@ -111,6 +134,24 @@ To use this server with Claude or other LLMs that support the Model Context Prot
 
 Replace the connection string with your actual values. This configuration can be used with Claude's MCP integration or other LLM platforms that support the Model Context Protocol.
 
+#### Using Docker
+
+```json
+{
+  "mcpServers": {
+    "sqlserver": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm", "tsql-mcp-server",
+        "--dsn", "Server=host.docker.internal;Database=your-database;User Id=your-username;Password=your-password;TrustServerCertificate=True;"
+      ]
+    }
+  }
+}
+```
+
+For read-only mode, add `"--read-only"` to the args array.
+
 #### Using Environment Variables for Sensitive Information
 
 For better security, you can use environment variables for your connection string:
@@ -132,8 +173,11 @@ For better security, you can use environment variables for your connection strin
 
 ## Command Line Options
 
-- `--dsn` or `-d`: SQL Server connection string
-- `--env-var` or `-e`: Environment variable name containing the connection string
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--dsn` | `-d` | SQL Server connection string |
+| `--env-var` | `-e` | Environment variable name containing the connection string |
+| `--read-only` | `-r` | Run in read-only mode (blocks INSERT, UPDATE, DELETE, etc.)
 
 ## Available MCP Tools
 
@@ -142,6 +186,14 @@ For better security, you can use environment variables for your connection strin
 - **ExecuteQuery**: Executes a SQL query against the database and returns the results
   - Parameters:
     - `query`: The SQL query to execute
+    - `commandTimeout`: Optional command timeout in seconds
+    - `maxRows`: Optional maximum number of rows to return
+
+- **ExecuteStoredProcedure**: Executes a stored procedure with optional parameters
+  - Parameters:
+    - `schema`: The schema name (e.g., 'dbo')
+    - `procedureName`: The stored procedure name
+    - `parametersJson`: Optional JSON object of parameters (e.g., `{"@param1": "value"}`)
     - `commandTimeout`: Optional command timeout in seconds
     - `maxRows`: Optional maximum number of rows to return
 
